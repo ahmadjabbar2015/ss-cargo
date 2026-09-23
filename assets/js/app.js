@@ -1869,9 +1869,9 @@ $("#loginGo").addEventListener("click",function(){
 
 /* When PHP auth is installed, the role picker is bypassed: the signed-in
    user from the session drives the sidebar and the landing view. */
-(function(){
+function applyAuthUser(){
   const cfg=window.FREIGHT_OS||{}, u=cfg.user;
-  if(!cfg.authOn||!u) return;
+  if(!cfg.authOn||!u) return false;
   $("#uav").textContent=u.initials||"--";
   $("#uname").textContent=u.name||u.email||"User";
   $("#urole").textContent=u.role||"";
@@ -1880,8 +1880,8 @@ $("#loginGo").addEventListener("click",function(){
   const r=String(u.role||"").toLowerCase();
   ROLE = r.indexOf("billing")>=0||r.indexOf("account")>=0 ? "billing"
        : r.indexOf("dispatch")>=0 ? "disp" : "ops";
-  go(ROLE==="billing"?"invoices":ROLE==="disp"?"dispatch":"dashboard");
-})();
+  return true;
+}
 /* login art */
 (function(){
   const cv=$("#lanes"); if(!cv) return; const ctx=cv.getContext("2d"); let W=1,H=1,t=0;
@@ -1942,7 +1942,16 @@ function applyServerData(d){
   return true;
 }
 
-function boot(){ DB=restore()||seed(); render(); }
+function boot(){
+  DB=restore()||seed();
+  // Sign the session user in before the first paint, so the sidebar and the
+  // landing view are chosen by their role rather than the role picker.
+  if(applyAuthUser()){
+    go(ROLE==="billing"?"invoices":ROLE==="disp"?"dispatch":"dashboard");
+  } else {
+    render();
+  }
+}
 
 (function start(){
   const cfg=window.FREIGHT_OS||{};
