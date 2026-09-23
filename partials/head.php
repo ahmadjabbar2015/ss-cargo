@@ -15,6 +15,9 @@ window.FREIGHT_OS = <?= json_encode([
     'apiUrl'      => base_url() . 'api/data.php',
     'hydrate'     => (bool) config('hydrate_from_db') && $dbReady,
     'dbConnected' => $dbReady,
+    'authOn'      => $authOn,
+    'user'        => $user,
+    'logoutUrl'   => base_url() . 'logout.php',
 ], JSON_UNESCAPED_SLASHES) ?>;
 </script>
 </head>

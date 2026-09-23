@@ -672,7 +672,7 @@ VIEWS.dispatch=function(){
 AFTER.dispatch=function(){
   $$("#content tbody tr[data-id]").forEach(r=>r.addEventListener("click",()=>openLoad(r.dataset.id)));
   $$("[data-adv]").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();advanceLoad(b.dataset.adv);}));
-  $$("[data-assign]").forEach(b=>b.addEventListener("click",()=>toast("Truck "+b.dataset.assign+" flagged for the next matching load.")));
+  $$("[data-assign]").forEach(b=>b.addEventListener("click",()=>assignModal(b.dataset.assign)));
 };
 
 /* ---------- INVOICES (AR) ---------- */
@@ -979,7 +979,8 @@ VIEWS.reports=function(){
 
 /* ---------- SETTINGS ---------- */
 VIEWS.settings=function(){
-  const users=[["Dana Whitfield","Operations manager","Full access"],["Marcus Reed","Broker","Quotes, loads, carriers"],["Priya Shah","Billing","Invoices, settlements, payments"],["Sam Okafor","Dispatcher","Loads, dispatch"]];
+  if(!DB.users||!DB.users.length) DB.users=DEFAULT_USERS.map(u=>u.slice());
+  const users=DB.users;
   const acc=[["Detention","$55 / hr after 2 free hrs","Billed to customer"],["Layover","$250 / day","Billed to customer"],["TONU","$150 flat","Paid to carrier"],["Lumper","At cost","Pass-through"],["Driver assist","$120","Billed to customer"],["Tarps","$100","Paid to carrier"]];
   const integ=[["QuickBooks Online","Sync invoices, payments and settlements","Connected"],["Stripe / ACH","Collect customer payments online","Connected"],["FMCSA SAFER","Authority and safety verification","Connected"],["Macropoint tracking","Load location updates","Not connected"],["TAFS factoring","NOA and factor payouts","Connected"],["Twilio SMS","Driver check calls","Not connected"]];
   return '<div class="stack"><div class="grid g2">'+
@@ -999,15 +1000,15 @@ VIEWS.settings=function(){
      '<div class="row"><span class="rl">Manager override below</span><span class="rr">10.0%</span></div>'+
      '<div class="row"><span class="rl">Fuel advance ceiling</span><span class="rr">40% of linehaul</span></div>'+
    '</div></div></div></div>'+
-   '<div class="card"><div class="card-h"><h3>Users &amp; roles</h3><span class="right"><button class="btn btn-s btn-x" data-act="soon">+ Invite user</button></span></div>'+
+   '<div class="card"><div class="card-h"><h3>Users &amp; roles</h3><span class="right"><button class="btn btn-s btn-x" data-act="inviteUser">+ Invite user</button></span></div>'+
      table([{t:"Name",f:u=>'<span class="t-main">'+esc(u[0])+'</span>'},{t:"Role",f:u=>esc(u[1])},{t:"Permissions",f:u=>'<span class="t-sub">'+esc(u[2])+'</span>'},
-       {t:"",r:1,f:()=>'<button class="btn btn-g btn-x" data-act="soon">Edit</button>'}],users,{empty:""})+'</div>'+
+       {t:"",r:1,f:u=>'<button class="btn btn-g btn-x" data-act="editUser" data-id="'+esc(u[3]||"")+'">Edit</button>'}],users,{empty:""})+'</div>'+
    '<div class="card"><div class="card-h"><h3>Accessorial catalog</h3><span class="sub">applied on loads and invoices</span></div>'+
      table([{t:"Charge",f:a=>'<span class="t-main">'+esc(a[0])+'</span>'},{t:"Rate",f:a=>esc(a[1])},{t:"Treatment",f:a=>'<span class="t-sub">'+esc(a[2])+'</span>'}],acc,{empty:""})+'</div>'+
    '<div class="card"><div class="card-h"><h3>Integrations</h3></div>'+
      table([{t:"Service",f:x=>'<span class="t-main">'+esc(x[0])+'</span>'},{t:"What it does",f:x=>'<span class="t-sub">'+esc(x[1])+'</span>'},
        {t:"Status",f:x=>x[2]==="Connected"?tag("Connected","ok"):tag("Not connected")},
-       {t:"",r:1,f:x=>'<button class="btn btn-'+(x[2]==="Connected"?"g":"s")+' btn-x" data-act="soon">'+(x[2]==="Connected"?"Manage":"Connect")+'</button>'}],integ,{empty:""})+'</div>'+
+       {t:"",r:1,f:x=>{var on=(DB.integrations&&DB.integrations[x[0]]!==undefined)?DB.integrations[x[0]]:(x[2]==="Connected");return '<button class="btn btn-'+(on?"g":"s")+' btn-x" data-act="integration" data-id="'+esc(x[0])+'">'+(on?"Disconnect":"Connect")+'</button>';}}],integ,{empty:""})+'</div>'+
    '<div class="note">'+ic("info",16)+'<div><b>Prototype.</b> Settings are display-only in this build; everything in Operations and Finance is fully interactive and recalculates live.</div></div>'+
   '</div>';
 };
@@ -1070,8 +1071,8 @@ function openLoad(id){
       '<div class="tl">'+tl+'</div>',
 
       l.docs.map(dd=>'<div class="att"><i class="sv lo"></i><div><b>'+esc(dd.n)+'</b><span>'+esc(dd.t)+' · uploaded by dispatch</span></div>'+
-        '<button class="btn btn-g btn-x" data-act="soon">'+ic("dl",13)+'</button></div>').join("")+
-      '<div class="btn-row" style="margin-top:12px"><button class="btn btn-s btn-x" data-act="soon">Upload document</button></div>'
+        '<button class="btn btn-g btn-x" data-act="docDl" data-id="'+esc(l.id+"|"+dd.t)+'">'+ic("dl",13)+'</button></div>').join("")+
+      '<div class="btn-row" style="margin-top:12px"><button class="btn btn-s btn-x" data-act="docUp" data-id="'+l.id+'">Upload document</button></div>'
     ],
     '<span class="left">Margin <b>'+money(loadMargin(l))+'</b> · '+pct(loadMargin(l),loadRevenue(l)).toFixed(1)+'%</span>'+
     (l.status==="Delivered"&&!l.invoiceId?'<button class="btn btn-p btn-x" data-act="invoiceLoad" data-id="'+l.id+'">Invoice this load</button>':"")+
@@ -1216,6 +1217,13 @@ function openCarrier(id){
 /* ================= MODALS & ACTIONS ================= */
 function f(label,inner,id){ return '<div class="f"><label for="'+id+'">'+esc(label)+'</label>'+inner+'</div>'; }
 const METHODS=["ACH","Wire","Check","Card","Cash"];
+const DEFAULT_USERS=[
+  ["Dana Whitfield","Operations manager","Full access","dana@sscargo.example"],
+  ["Marcus Oyelaran","Dispatcher","Loads, dispatch","marcus@sscargo.example"],
+  ["Priya Raman","Billing","Invoices, settlements, payments","priya@sscargo.example"],
+  ["Colin Frazier","Carrier sales","Quotes, loads, carriers","colin@sscargo.example"],
+  ["Sam Achebe","Accounting","Reports and payments","sam@sscargo.example"]
+];
 
 function payModal(id){
   const i=inv(id); if(!i) return;
@@ -1477,6 +1485,283 @@ function doMethod(id){
 }
 
 /* ================= EVENTS ================= */
+
+/* ================= NEW CUSTOMER ================= */
+function newCustomerModal(){
+  modal('<div class="modal-h"><h3>Add customer</h3><p>Onboard a billing account. Credit limit and terms drive the AR exposure checks.</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Company name",'<input id="cu_name" placeholder="Acme Freight Inc.">',"cu_name")+
+    f("Billing contact",'<input id="cu_contact" placeholder="Jane Doe">',"cu_contact")+
+    f("AP email",'<input id="cu_email" type="email" placeholder="ap@acme.example">',"cu_email")+
+    f("Phone",'<input id="cu_phone" placeholder="(555) 555-0100">',"cu_phone")+
+    f("Payment terms",'<select id="cu_terms"><option value="15">Net 15</option><option value="21">Net 21</option><option value="30" selected>Net 30</option><option value="45">Net 45</option><option value="60">Net 60</option></select>',"cu_terms")+
+    f("Credit limit ($)",'<input id="cu_credit" type="number" step="5000" value="50000">',"cu_credit")+
+    f("Payment method",'<select id="cu_method">'+METHODS.map(m=>'<option'+(m==="ACH"?" selected":"")+'>'+m+'</option>').join("")+'</select>',"cu_method")+
+    f("Account last 4",'<input id="cu_last4" maxlength="4" inputmode="numeric" placeholder="4471">',"cu_last4")+
+  '</div><div class="note">'+ic("info",16)+'<div>Only the last four digits are kept — no full account or card number is stored. The account is live immediately and can be quoted against.</div></div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button><button class="btn btn-p" data-act="doNewCustomer">Add customer</button></div>');
+}
+
+function doNewCustomer(){
+  const name=$("#cu_name").value.trim();
+  if(!name){ toast("Enter a company name."); $("#cu_name").focus(); return; }
+  if(DB.customers.some(c=>c.name.toLowerCase()===name.toLowerCase())){
+    toast("A customer called "+name+" already exists."); $("#cu_name").focus(); return;
+  }
+  const credit=+$("#cu_credit").value||0;
+  if(credit<0){ toast("Credit limit cannot be negative."); return; }
+  const last4=($("#cu_last4").value||"").replace(/\D/g,"").slice(-4);
+
+  const c={
+    id:"C-"+(DB.customers.reduce((m,x)=>Math.max(m,parseInt(String(x.id).slice(2),10)||0),100)+1),
+    name:name,
+    contact:$("#cu_contact").value.trim(),
+    email:$("#cu_email").value.trim(),
+    phone:$("#cu_phone").value.trim(),
+    terms:+$("#cu_terms").value||30,
+    credit:credit,
+    method:{type:$("#cu_method").value,last4:last4||"—"},
+    since:String(TODAY.getFullYear())
+  };
+
+  DB.customers.push(c);
+  DB.activity.unshift({t:"g",b:"Customer added",x:c.name+" · Net "+c.terms+" · "+money(c.credit)+" limit",w:"just now"});
+  save(); closeModal(); render();
+  toast(c.name+" added.");
+
+  /* Persist to MySQL so it survives a browser reset. Failure is non-fatal —
+     the customer stays in this session and the toast says so. */
+  persist("api/customers.php",c,function(saved){
+    if(saved&&saved.id&&saved.id!==c.id){ c.id=saved.id; save(); render(); }
+  });
+}
+
+/* ================= NEW QUOTE ================= */
+function newQuoteModal(){
+  if(!DB.customers.length){ toast("Add a customer first."); return; }
+  modal('<div class="modal-h"><h3>New quote</h3><p>Price a lane for a customer. Won quotes book straight through to a load.</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Customer",'<select id="q_cust">'+DB.customers.map(c=>'<option value="'+c.id+'">'+esc(c.name)+'</option>').join("")+'</select>',"q_cust")+
+    f("Origin",'<input id="q_orig" value="Dallas, TX">',"q_orig")+
+    f("Destination",'<input id="q_dest" value="Atlanta, GA">',"q_dest")+
+    f("Equipment",'<select id="q_equip"><option>Dry Van 53\'</option><option>Dry Van 48\'</option><option>Reefer</option><option>Flatbed</option><option>Step Deck</option><option>Power Only</option><option>Hotshot</option></select>',"q_equip")+
+    f("Miles",'<input id="q_miles" type="number" value="781">',"q_miles")+
+    f("Weight (lb)",'<input id="q_weight" type="number" step="500" value="40000">',"q_weight")+
+    f("Ready date",'<input id="q_ready" type="date" value="'+iso(addDays(TODAY,1))+'">',"q_ready")+
+    f("Target rate ($)",'<input id="q_target" type="number" step="50" value="1900">',"q_target")+
+  '</div><div class="f" style="margin-top:12px"><label for="q_notes">Notes</label><textarea id="q_notes" rows="2" placeholder="Dock hours, appointment requirements, temperature…"></textarea></div>'+
+  '<div class="note">'+ic("info",16)+'<div>The quote lands in the pipeline as <b>New</b>. Price it there to see margin before sending.</div></div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button><button class="btn btn-p" data-act="doNewQuote">Create quote</button></div>');
+}
+
+function doNewQuote(){
+  const orig=$("#q_orig").value.trim(), dest=$("#q_dest").value.trim();
+  if(!orig||!dest){ toast("Enter both an origin and a destination."); return; }
+  const miles=+$("#q_miles").value||0;
+  if(miles<=0){ toast("Enter the mileage."); $("#q_miles").focus(); return; }
+  const target=+$("#q_target").value||0;
+  if(target<=0){ toast("Enter a target rate."); $("#q_target").focus(); return; }
+
+  const ready=$("#q_ready").value?isoDate($("#q_ready").value):addDays(TODAY,1);
+  const q={
+    id:"Q-"+(DB.quotes.reduce((m,x)=>Math.max(m,parseInt(String(x.id).slice(2),10)||0),1100)+1),
+    cust:$("#q_cust").value,
+    orig:orig, dest:dest,
+    equip:$("#q_equip").value,
+    miles:miles,
+    weight:+$("#q_weight").value||0,
+    ready:ready,
+    target:target,
+    status:"New",
+    recv:"just now",
+    notes:$("#q_notes").value.trim()
+  };
+
+  DB.quotes.unshift(q);
+  DB.activity.unshift({t:"b",b:"New quote request",x:cust(q.cust).name+" — "+q.orig+" → "+q.dest,w:"just now"});
+  save(); closeModal(); go("quotes");
+  toast("Quote "+q.id+" created.");
+}
+
+/* Fire-and-forget write to the PHP API. The app has already updated its own
+   state by the time this runs, so a failure only costs server persistence. */
+function persist(path,body,done){
+  const cfg=window.FREIGHT_OS||{};
+  if(!cfg.dbConnected||typeof fetch!=="function") return;
+  fetch((cfg.baseUrl||"/")+path,{
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body:JSON.stringify(body)
+  }).then(r=>r.json()).then(function(res){
+    if(res&&res.ok){ if(done) done(res.customer||res.record||null); }
+    else toast("Saved locally — server said: "+((res&&res.reason)||"unavailable"));
+  }).catch(function(){ toast("Saved locally — could not reach the server."); });
+}
+
+/* ================= CSV EXPORT ================= */
+function csvCell(v){
+  const s=v==null?"":String(v);
+  return /[",\n]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function downloadBlob(filename,text,mime){
+  const blob=new Blob(["﻿"+text],{type:(mime||"text/plain")+";charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url; a.download=filename; document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); },0);
+}
+function downloadCSV(filename,rows){
+  downloadBlob(filename,rows.map(r=>r.map(csvCell).join(",")).join("\r\n"),"text/csv");
+}
+
+function exportARCsv(){
+  const rows=[["Invoice","Customer","Issued","Due","Terms","Amount","Paid","Balance","Status","Note"]];
+  DB.invoices.forEach(function(i){
+    rows.push([i.id,cust(i.cust).name,i.issued?iso(i.issued):"",i.due?iso(i.due):"","Net "+i.terms,
+      (i.amount||0).toFixed(2),(i.paid||0).toFixed(2),((i.amount||0)-(i.paid||0)).toFixed(2),
+      invStatus(i),i.note||""]);
+  });
+  downloadCSV("ss-cargo-ar-"+iso(TODAY)+".csv",rows);
+  toast("Exported "+DB.invoices.length+" invoices.");
+}
+
+function exportLoadsCsv(){
+  const rows=[["Load","Customer","Carrier","Origin","Destination","Equipment","Miles","Weight",
+               "Pickup","Delivery","Revenue","Carrier cost","Margin","Margin %","Status","Invoice"]];
+  DB.loads.forEach(function(l){
+    const rev=loadRevenue(l), mar=loadMargin(l);
+    rows.push([l.id,cust(l.cust).name,carr(l.carrier).name,l.orig,l.dest,l.equip,l.miles,l.weight,
+      l.pickup?iso(l.pickup):"",l.delivery?iso(l.delivery):"",
+      rev.toFixed(2),(l.cost||0).toFixed(2),mar.toFixed(2),pct(mar,rev).toFixed(1),l.status,l.invoiceId||""]);
+  });
+  downloadCSV("ss-cargo-loads-"+iso(TODAY)+".csv",rows);
+  toast("Exported "+DB.loads.length+" loads.");
+}
+
+function sendStatements(){
+  const rows=[["Customer","Contact","Email","Terms","Open invoices","Open AR","Credit limit","Credit used %"]];
+  let n=0;
+  DB.customers.forEach(function(c){
+    const open=DB.invoices.filter(i=>i.cust===c.id&&(i.amount-i.paid)>0.005);
+    if(!open.length) return;
+    n++;
+    const bal=open.reduce((s,i)=>s+(i.amount-i.paid),0);
+    rows.push([c.name,c.contact||"",c.email||"","Net "+c.terms,open.length,
+      bal.toFixed(2),(c.credit||0).toFixed(2),c.credit?((bal/c.credit)*100).toFixed(1):"0.0"]);
+  });
+  if(!n){ toast("No customer has an open balance."); return; }
+  downloadCSV("ss-cargo-statements-"+iso(TODAY)+".csv",rows);
+  toast("Statements for "+n+" customer"+(n===1?"":"s")+" downloaded.");
+}
+
+/* ================= ASSIGN TRUCK ================= */
+function assignModal(tid){
+  const t=DB.trucks.find(x=>x.id===tid); if(!t) return;
+  const open=DB.loads.filter(l=>["Booked","At pickup"].indexOf(l.status)>=0);
+  if(!open.length){ toast("No unassigned loads to cover right now."); return; }
+  modal('<div class="modal-h"><h3>Assign '+esc(t.unit)+'</h3><p>'+esc(t.driver||"Driver")+' &middot; '+esc(t.loc||"")+'</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Load",'<select id="as_load">'+open.map(l=>'<option value="'+l.id+'">'+esc(l.id)+' &mdash; '+esc(l.orig)+' to '+esc(l.dest)+'</option>').join("")+'</select>',"as_load")+
+    f("Status after assign",'<select id="as_status"><option value="Booked">Booked</option><option value="At pickup">At pickup</option></select>',"as_status")+
+  '</div><div class="note">'+ic("info",16)+'<div>Assigning sets the truck to <b>On load</b> and points the load at this truck.</div></div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button><button class="btn btn-p" data-act="doAssign" data-id="'+t.id+'">Assign</button></div>');
+}
+function doAssign(tid){
+  const t=DB.trucks.find(x=>x.id===tid); if(!t) return;
+  const l=load($("#as_load").value); if(!l){ toast("Pick a load."); return; }
+  l.truck=t.id; l.status=$("#as_status").value;
+  t.status="On load"; t.loc=l.orig;
+  DB.activity.unshift({t:"b",b:"Truck assigned",x:t.unit+" to "+l.id,w:"just now"});
+  save(); closeModal(); render();
+  toast(t.unit+" assigned to "+l.id+".");
+}
+
+/* ================= SETTINGS: USERS ================= */
+function inviteUserModal(){
+  modal('<div class="modal-h"><h3>Invite user</h3><p>Adds a person to the roster. Give them a password with bin/make-user.php on the server.</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Full name",'<input id="iu_name" placeholder="Jane Doe">',"iu_name")+
+    f("Email",'<input id="iu_email" type="email" placeholder="jane@sscargo.example">',"iu_email")+
+    f("Role",'<select id="iu_role"><option>Operations manager</option><option>Dispatcher</option><option>Billing</option><option>Carrier sales</option><option>Accounting</option></select>',"iu_role")+
+  '</div><div class="note">'+ic("info",16)+'<div>Until a password hash exists in the <b>users</b> table this person cannot sign in &mdash; that is deliberate.</div></div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button><button class="btn btn-p" data-act="doInviteUser">Add user</button></div>');
+}
+function doInviteUser(){
+  const name=$("#iu_name").value.trim(), email=$("#iu_email").value.trim();
+  if(!name){ toast("Enter a name."); return; }
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ toast("Enter a valid email."); return; }
+  if(DB.users.some(u=>String(u[3]||"").toLowerCase()===email.toLowerCase())){ toast("That email is already on the roster."); return; }
+  const role=$("#iu_role").value;
+  const perms=role==="Operations manager"?"Full access":
+              role==="Dispatcher"?"Loads and dispatch":
+              role==="Billing"?"Invoices, settlements, payments":
+              role==="Carrier sales"?"Quotes, loads, carriers":"Reports and payments";
+  DB.users.push([name,role,perms,email]);
+  DB.activity.unshift({t:"b",b:"User added",x:name+" - "+role,w:"just now"});
+  save(); closeModal(); render();
+  toast(name+" added to the roster.");
+}
+function editUserModal(email){
+  const u=DB.users.find(x=>String(x[3]||"")===email);
+  if(!u){ toast("This user has no email on file and cannot be edited."); return; }
+  modal('<div class="modal-h"><h3>Edit user</h3><p>'+esc(u[0])+'</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Role",'<select id="eu_role">'+["Operations manager","Dispatcher","Billing","Carrier sales","Accounting"]
+      .map(r=>'<option'+(r===u[1]?" selected":"")+'>'+r+'</option>').join("")+'</select>',"eu_role")+
+  '</div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button>'+
+  '<button class="btn btn-p" data-act="doEditUser" data-id="'+esc(email)+'">Save</button></div>');
+}
+function doEditUser(email){
+  const u=DB.users.find(x=>String(x[3]||"")===email); if(!u) return;
+  u[1]=$("#eu_role").value;
+  save(); closeModal(); render(); toast(u[0]+" updated to "+u[1]+".");
+}
+
+/* ================= SETTINGS: INTEGRATIONS ================= */
+function toggleIntegration(name){
+  DB.integrations=DB.integrations||{};
+  const on=!DB.integrations[name];
+  DB.integrations[name]=on;
+  DB.activity.unshift({t:on?"g":"w",b:on?"Integration connected":"Integration disconnected",x:name,w:"just now"});
+  save(); render();
+  toast(name+(on?" connected.":" disconnected."));
+}
+
+/* ================= DOCUMENTS ================= */
+function downloadDoc(key){
+  const parts=String(key).split("|"), loadId=parts[0], docName=parts[1]||"document";
+  const l=load(loadId);
+  const lines=["S&S CARGO - "+docName,"","Load: "+loadId];
+  if(l){
+    lines.push("Customer: "+cust(l.cust).name,"Carrier: "+carr(l.carrier).name,
+      "Lane: "+l.orig+" to "+l.dest,"Equipment: "+l.equip,
+      "Miles: "+l.miles,"Weight: "+l.weight+" lb",
+      "Pickup: "+(l.pickup?iso(l.pickup):"-"),"Delivery: "+(l.delivery?iso(l.delivery):"-"),
+      "Customer rate: "+money(loadRevenue(l)),"Carrier pay: "+money(l.cost||0));
+  }
+  lines.push("","Generated "+iso(TODAY)+" - prototype document, not a legal instrument.");
+  downloadBlob((loadId+"-"+docName).replace(/[^\w.-]+/g,"-")+".txt",lines.join("\r\n"),"text/plain");
+  toast(docName+" downloaded.");
+}
+function uploadDocModal(loadId){
+  modal('<div class="modal-h"><h3>Upload document</h3><p>'+esc(loadId)+'</p></div>'+
+  '<div class="modal-b"><div class="fg">'+
+    f("Document type",'<select id="ud_type"><option>Rate confirmation</option><option>Bill of lading</option><option>Proof of delivery</option><option>Invoice copy</option><option>Lumper receipt</option><option>Other</option></select>',"ud_type")+
+    f("File name",'<input id="ud_name" placeholder="pod-scan.pdf">',"ud_name")+
+  '</div><div class="note">'+ic("info",16)+'<div>The file itself is not stored in this build &mdash; the document is recorded against the load so the paper trail is visible.</div></div></div>'+
+  '<div class="modal-f"><button class="btn btn-s" data-close>Cancel</button><button class="btn btn-p" data-act="doUploadDoc" data-id="'+esc(loadId)+'">Add document</button></div>');
+}
+function doUploadDoc(loadId){
+  const l=load(loadId); if(!l) return;
+  const type=$("#ud_type").value;
+  const name=$("#ud_name").value.trim()||type.toLowerCase().replace(/\s+/g,"-")+".pdf";
+  l.docs=l.docs||[];
+  l.docs.push({n:name,t:type});
+  DB.activity.unshift({t:"b",b:"Document added",x:type+" on "+l.id,w:"just now"});
+  save(); closeModal(); openLoad(l.id); render();
+  toast(type+" recorded on "+l.id+".");
+}
 const ACTIONS={
   reset:resetData, newLoad:newLoadModal, doNewLoad:doNewLoad, newInvoice:newInvoiceModal, createInvoice:createInvoice,
   approveAll:approveAll, payRun:payRun, doPayRun:doPayRun, doAcc:e=>doAcc(e), applyPay:id=>applyPayment(id),
@@ -1492,11 +1777,22 @@ const ACTIONS={
       i.loads.forEach(lid=>{const l=load(lid); if(l) l.status="Paid";}); });
     F.sel=[]; render(); toast("Recorded "+money(t)+" across "+ids.length+" invoices."); },
   clearSel:()=>{ F.sel=[]; render(); },
-  statement:()=>toast("Statements queued for "+DB.customers.length+" customers."),
-  exportAR:()=>toast("AR export queued — "+DB.invoices.length+" rows will be emailed as CSV."),
-  exportLoads:()=>toast("Load export queued — "+DB.loads.length+" rows will be emailed as CSV."),
-  newQuote:()=>toast("New-quote intake opens the same form customers use on the public site."),
-  newCustomer:()=>toast("Customer onboarding runs a credit check before the account goes live."),
+  statement:()=>sendStatements(),
+  exportAR:()=>exportARCsv(),
+  exportLoads:()=>exportLoadsCsv(),
+  newQuote:()=>newQuoteModal(),
+  newCustomer:()=>newCustomerModal(),
+  doNewCustomer:()=>doNewCustomer(),
+  doNewQuote:()=>doNewQuote(),
+  doAssign:id=>doAssign(id),
+  inviteUser:()=>inviteUserModal(),
+  editUser:id=>editUserModal(id),
+  doInviteUser:()=>doInviteUser(),
+  doEditUser:id=>doEditUser(id),
+  integration:id=>toggleIntegration(id),
+  docDl:id=>downloadDoc(id),
+  docUp:id=>uploadDocModal(id),
+  doUploadDoc:id=>doUploadDoc(id),
   soon:()=>toast("Not wired in this prototype build.")
 };
 document.addEventListener("click",function(e){
@@ -1548,7 +1844,11 @@ $("#themeBtn").addEventListener("click",function(){
   document.documentElement.setAttribute("data-theme",dark?"light":"dark");
   try{ localStorage.setItem("ss-theme",dark?"light":"dark"); }catch(e){}
 });
-$("#signout").addEventListener("click",function(){ $("#app").hidden=true; $("#login").hidden=false; });
+$("#signout").addEventListener("click",function(){
+  var cfg=window.FREIGHT_OS||{};
+  if(cfg.authOn&&cfg.logoutUrl){ window.location.href=cfg.logoutUrl; return; }
+  $("#app").hidden=true; $("#login").hidden=false;
+});
 
 /* login */
 const ROLES=[["ops","Operations manager","Everything — the full console","DW","Dana Whitfield"],
@@ -1566,6 +1866,22 @@ $("#loginGo").addEventListener("click",function(){
   go(ROLE==="billing"?"invoices":ROLE==="disp"?"dispatch":"dashboard");
 });
 
+
+/* When PHP auth is installed, the role picker is bypassed: the signed-in
+   user from the session drives the sidebar and the landing view. */
+(function(){
+  const cfg=window.FREIGHT_OS||{}, u=cfg.user;
+  if(!cfg.authOn||!u) return;
+  $("#uav").textContent=u.initials||"--";
+  $("#uname").textContent=u.name||u.email||"User";
+  $("#urole").textContent=u.role||"";
+  $("#login").hidden=true;
+  $("#app").hidden=false;
+  const r=String(u.role||"").toLowerCase();
+  ROLE = r.indexOf("billing")>=0||r.indexOf("account")>=0 ? "billing"
+       : r.indexOf("dispatch")>=0 ? "disp" : "ops";
+  go(ROLE==="billing"?"invoices":ROLE==="disp"?"dispatch":"dashboard");
+})();
 /* login art */
 (function(){
   const cv=$("#lanes"); if(!cv) return; const ctx=cv.getContext("2d"); let W=1,H=1,t=0;

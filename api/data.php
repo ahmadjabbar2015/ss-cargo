@@ -10,7 +10,9 @@
  * is unavailable — the caller is expected to fall back to its sample data.
  */
 
-require __DIR__ . '/../includes/helpers.php';
+require __DIR__ . '/../includes/auth.php';
+
+auth_require_api();
 
 $pdo = db();
 if (!$pdo || !db_installed()) {
