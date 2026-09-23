@@ -23,8 +23,8 @@ return [
         'host'     => getenv('DB_HOST') ?: '127.0.0.1',
         'port'     => (int) (getenv('DB_PORT') ?: 3306),
         'name'     => getenv('DB_NAME') ?: 'sscargo_freight_os',
-        'user'     => getenv('DB_USER') ?: 'root',
-        'pass'     => getenv('DB_PASS') !== false ? getenv('DB_PASS') : '',
+        'user'     => getenv('DB_USER') ?: 'sscargo',
+        'pass'     => getenv('DB_PASS') !== false ? getenv('DB_PASS') : 'StrongPasswordHere123$',
         'charset'  => 'utf8mb4',
     ],
 

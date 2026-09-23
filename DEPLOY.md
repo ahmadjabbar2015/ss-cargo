@@ -120,7 +120,7 @@ sudo chown www-data:www-data /var/www/ss-cargo/includes/config.php
 
 ## 4. Load the schema and dummy data
 
-Either import directly:
+Import from the command line — this is the recommended path:
 
 ```bash
 cd /var/www/ss-cargo
@@ -128,11 +128,14 @@ mysql -u sscargo -p sscargo_freight_os < database/schema.sql
 mysql -u sscargo -p sscargo_freight_os < database/seed.sql
 ```
 
-…or, once nginx is up (step 5), open `http://ss-cargo.9to5dev.com/install.php`
-and click the button — it creates the database, applies both files and prints
-the row counts.
+> **The browser installer is blocked by design.** `install.php` still works,
+> but the nginx config in step 5 denies `/install.php` outright, so opening it
+> in a browser returns 403. That is deliberate — the installer drops and
+> recreates every table, and it must not be reachable on a public host. If you
+> specifically want to use it, comment out the `location = /install.php` block,
+> reload nginx, run it, then restore the block *and* delete the file.
 
-Either way you should end up with:
+You should end up with:
 
 ```
 customers 8 · carriers 9 · trucks 8 · lanes 14 · quotes 8
@@ -154,83 +157,16 @@ which is exactly why the installer must not stay on a public host.
 ## 5. nginx server block
 
 `.htaccess` does nothing on nginx, so the protections it provides are
-reproduced below. Create `/etc/nginx/sites-available/ss-cargo.9to5dev.com`:
+reproduced in a ready-made config file:
 
-```nginx
-server {
-    listen 80;
-    listen [::]:80;
-    server_name ss-cargo.9to5dev.com;
+**[`ss-cargo.9to5dev.com.conf`](ss-cargo.9to5dev.com.conf)**
 
-    root /var/www/ss-cargo;
-    index index.php;
-
-    access_log /var/log/nginx/ss-cargo.9to5dev.com.access.log;
-    error_log  /var/log/nginx/ss-cargo.9to5dev.com.error.log;
-
-    client_max_body_size 16M;
-
-    # --- Security hardening ---
-    # These regex blocks MUST stay above the `~ \.php$` block below: nginx
-    # tries regex locations in the order they appear and stops at the first
-    # match, so if the PHP block came first these would never be reached.
-
-    # Never expose app internals or raw SQL over HTTP.
-    location ~ ^/(includes|database|partials)/ { deny all; }
-    location ~* \.(sql|bak|md|log|ini)$        { deny all; }
-
-    # Hidden files (.htaccess, .git, …) except ACME challenges.
-    location ~ /\.(?!well-known) { deny all; }
-
-    # Belt and braces: keep the installer unreachable even if it is still
-    # on disk. Remove this line only if you deliberately need to re-run it.
-    location = /install.php { deny all; }
-
-    # --- Application ---
-    location / {
-        try_files $uri $uri/ /index.php?$args;
-    }
-
-    location ~ \.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
-    }
-
-    # The app fingerprints its own CSS/JS with ?v=<mtime>, so a long cache is
-    # safe — a redeploy changes the query string and busts it automatically.
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot|webp|avif)$ {
-        expires 30d;
-        add_header Cache-Control "public, no-transform";
-        access_log off;
-    }
-
-    # Never cache the JSON API.
-    location ^~ /api/ {
-        add_header Cache-Control "no-store";
-        try_files $uri =404;
-
-        location ~ \.php$ {
-            include snippets/fastcgi-php.conf;
-            fastcgi_pass unix:/run/php/php8.3-fpm.sock;
-            fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-            include fastcgi_params;
-        }
-    }
-
-    location = /favicon.ico { log_not_found off; access_log off; }
-    location = /robots.txt  { log_not_found off; access_log off; allow all; }
-
-    gzip on;
-    gzip_types text/css application/javascript application/json;
-    gzip_min_length 1024;
-}
-```
-
-Enable it and reload:
+Install it:
 
 ```bash
+cd /var/www/ss-cargo
+sudo cp ss-cargo.9to5dev.com.conf \
+        /etc/nginx/sites-available/ss-cargo.9to5dev.com
 sudo ln -s /etc/nginx/sites-available/ss-cargo.9to5dev.com \
            /etc/nginx/sites-enabled/
 sudo nginx -t
@@ -238,6 +174,33 @@ sudo systemctl reload nginx
 ```
 
 `nginx -t` must print `syntax is ok` / `test is successful` before you reload.
+If it fails, **do not reload** — a bad config takes down every site on the box,
+`impact.9to5dev.com` included. Fix it first; the running nginx keeps serving
+the last good config until you reload.
+
+What the file does, and why:
+
+| Block | Purpose |
+|---|---|
+| `location ~ ^/(includes\|database\|partials)/` | Blocks the DB password in `config.php` and the raw `.sql` dumps |
+| `location ~* \.(sql\|bak\|md\|log\|ini\|txt)$` | Blocks `DEPLOY.md`, `index.html.bak`, `README.txt` if they get uploaded |
+| `location ~ /\.(?!well-known)` | Blocks `.git` and `.htaccess`, while letting certbot renew |
+| `location = /install.php` | Keeps the destructive installer unreachable |
+| `location ~ \.php$` | PHP 8.3-FPM, same socket as your `impact` site |
+| `location ~* \.(js\|css\|…)$` | 30-day cache — safe because `index.php` appends `?v=<mtime>` |
+
+Two ordering details that matter, both called out in the file's comments:
+
+- **The deny blocks must stay above `location ~ \.php$`.** nginx tries regex
+  locations in written order and stops at the first match. Move the PHP block
+  up and `includes/config.php` gets *executed* and `database/seed.sql` gets
+  served as plain text.
+- **`location = /robots.txt` still works** despite the `txt` deny rule, because
+  nginx resolves exact (`=`) matches before any regex.
+
+I have not been able to run `nginx -t` against this file locally — there is no
+nginx, Docker daemon, or WSL distro on this machine — so treat the server-side
+`nginx -t` in the commands above as the real check, not a formality.
 
 ---
 
